@@ -151,3 +151,5 @@ The production schema is located in `db/schema.sql`. It defines:
 - [x] Topic mastery updates dynamically and flags weak topics for revision.
 - [x] Recommended study tasks appear in the Planner with explicit rationales.
 - [x] Demo mode reset restores clean initial state.
+# LearnMate-AI
+An AI-powered personalized learning platform with study materials, PDF reading, an AI tutor, adaptive quizzes, and progress tracking.
