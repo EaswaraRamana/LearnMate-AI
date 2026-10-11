@@ -1,0 +1,8 @@
+{
+  "name": "LearnMate AI",
+  "description": "Personalized tutoring, source-grounded RAG study companion, adaptive quizzes, and learning analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
