@@ -73,17 +73,60 @@ function getGeminiClient(timeout: number): GoogleGenAI {
   return aiClient;
 }
 
-function getGeminiFailure(error: unknown, operation: string): TutorServiceError {
-  const record = typeof error === 'object' && error !== null
-    ? error as { status?: unknown; statusCode?: unknown; code?: unknown; name?: unknown }
+interface GeminiErrorMetadata {
+  status?: number;
+  code?: string;
+  name?: string;
+  message?: string;
+}
+
+function getErrorRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
     : {};
-  const rawStatus = record.status ?? record.statusCode;
-  const status = typeof rawStatus === 'number'
-    ? rawStatus
-    : typeof rawStatus === 'string' && /^\d+$/.test(rawStatus)
-      ? Number(rawStatus)
-      : undefined;
-  const errorName = typeof record.name === 'string' ? record.name : '';
+}
+
+function getNumericStatus(value: unknown): number | undefined {
+  if (typeof value === 'number') return value;
+  return typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+function redactGeminiErrorMessage(message: string, sensitiveValues: string[] = []): string {
+  let safeMessage = message;
+  for (const value of sensitiveValues) {
+    if (value.length >= 8) safeMessage = safeMessage.replaceAll(value, '[REDACTED_INPUT]');
+  }
+  return safeMessage
+    .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED_API_KEY]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:authorization|x-goog-api-key)\s*[:=]\s*[^\s,;]+/gi, '[REDACTED_CREDENTIAL]')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 600);
+}
+
+export function getSafeGeminiErrorMetadata(error: unknown, sensitiveValues: string[] = []): GeminiErrorMetadata {
+  const record = getErrorRecord(error);
+  const nestedError = getErrorRecord(record.error);
+  const response = getErrorRecord(record.response);
+  const rawStatus = record.status ?? record.statusCode ?? response.status
+    ?? nestedError.status ?? nestedError.statusCode;
+  const rawCode = record.code ?? nestedError.code;
+  const rawName = record.name ?? nestedError.name;
+  const rawMessage = record.message ?? nestedError.message;
+  return {
+    ...(getNumericStatus(rawStatus) !== undefined ? { status: getNumericStatus(rawStatus) } : {}),
+    ...(typeof rawCode === 'string' ? { code: rawCode.slice(0, 100) } : {}),
+    ...(typeof rawName === 'string' ? { name: rawName.slice(0, 100) } : {}),
+    ...(typeof rawMessage === 'string'
+      ? { message: redactGeminiErrorMessage(rawMessage, sensitiveValues) }
+      : {})
+  };
+}
+
+export function getGeminiFailure(error: unknown, operation: string): TutorServiceError {
+  const metadata = getSafeGeminiErrorMetadata(error);
+  const status = metadata.status;
+  const errorName = metadata.name || '';
 
   if (errorName === 'AbortError' || errorName === 'TimeoutError' || errorName === 'RequestTimeoutError') {
     return new TutorServiceError(
@@ -94,6 +137,7 @@ function getGeminiFailure(error: unknown, operation: string): TutorServiceError 
       status
     );
   }
+
   if (status === 401 || status === 403) {
     return new TutorServiceError(
       'Gemini rejected the server API key. Replace it with a valid key that has Gemini API access.',
@@ -148,6 +192,22 @@ function getGeminiFailure(error: unknown, operation: string): TutorServiceError 
   );
 }
 
+function logGeminiFailure(
+  error: unknown,
+  failure: TutorServiceError,
+  operation: string,
+  sensitiveValues: string[] = []
+): void {
+  const metadata = getSafeGeminiErrorMetadata(error, sensitiveValues);
+  console.error('Gemini request failed:', JSON.stringify({
+    operation,
+    code: failure.code,
+    upstreamStatus: metadata.status ?? failure.upstreamStatus,
+    upstreamCode: metadata.code,
+    upstreamMessage: metadata.message
+  }));
+}
+
 export async function transcribeTutorAudio(audio: Buffer, mimeType: string): Promise<string> {
   if (audio.length === 0) {
     throw new TutorServiceError('The recording is empty. Please record your question again.', 400, 'UPSTREAM_BAD_REQUEST');
@@ -169,8 +229,7 @@ export async function transcribeTutorAudio(audio: Buffer, mimeType: string): Pro
             mime_type: mimeType
           }
         ],
-        store: false,
-        generation_config: { temperature: 0 }
+        store: false
       });
 
     const transcript = (interaction.output_text || '').trim().replace(/^["']|["']$/g, '');
@@ -181,7 +240,7 @@ export async function transcribeTutorAudio(audio: Buffer, mimeType: string): Pro
   } catch (error) {
     if (error instanceof TutorServiceError) throw error;
     const failure = getGeminiFailure(error, 'Voice transcription');
-    console.error(`Gemini speech transcription failed (${failure.code}${failure.upstreamStatus ? `, upstream ${failure.upstreamStatus}` : ''}).`);
+    logGeminiFailure(error, failure, 'speech transcription', [audio.toString('base64')]);
     throw failure;
   }
 }
@@ -272,6 +331,7 @@ DOCUMENT GROUNDING & INTEGRITY:
 - A provided STUDY LESSON has no page references. When using it, identify the lesson title if helpful, but never invent a page number or present an invented quotation as source text.
 - Never invent quotations, page numbers, or citations.`;
 
+  let userPrompt = '';
   try {
     const historyPrompt = conversationHistory.slice(-4).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
     const conciseDefinitionRequest = /\b(in simple(?:r)?(?: language| terms)?|simply|simple explanation|easy words)\b/i.test(question);
@@ -279,7 +339,7 @@ DOCUMENT GROUNDING & INTEGRITY:
       ? 'Answer the current question directly in 2-4 beginner-friendly sentences and include one short everyday example. Do not use the six-section format.'
       : 'Provide a warm, encouraging, student-friendly explanation following your 6-part teaching method.';
 
-    const userPrompt = `${historyPrompt ? `Recent conversation context (use only if the current question refers to it):\n${historyPrompt}\n\n` : ''}${
+    userPrompt = `${historyPrompt ? `Recent conversation context (use only if the current question refers to it):\n${historyPrompt}\n\n` : ''}${
       hasRetrievedEvidence
         ? `POSSIBLY RELEVANT STUDY MATERIAL EXCERPTS (verify that each excerpt actually supports the question before using or citing it):\n${contextBlock}${studyMaterial ? `\n\nSTUDY LESSON (provided lesson content; it has no page references):\nTitle: ${studyMaterial.title}\n${studyMaterial.content}` : ''}\n\n`
         : selectedDocTitles.length > 0
@@ -294,8 +354,7 @@ ${responseStyle}`;
           model: GEMINI_MODEL,
           contents: userPrompt,
           config: {
-            systemInstruction,
-            temperature: 0.2,
+            systemInstruction
           },
         });
 
@@ -322,7 +381,7 @@ ${responseStyle}`;
   } catch (err) {
     if (err instanceof TutorServiceError) throw err;
     const failure = getGeminiFailure(err, 'The AI tutor');
-    console.error(`Gemini tutor request failed (${failure.code}${failure.upstreamStatus ? `, upstream ${failure.upstreamStatus}` : ''}).`);
+    logGeminiFailure(err, failure, 'tutor', [userPrompt, systemInstruction]);
     throw failure;
   }
 }
@@ -603,7 +662,7 @@ Rules:
   } catch (error) {
     if (error instanceof TutorServiceError) throw error;
     const failure = getGeminiFailure(error, 'Quiz generation');
-    console.error(`Gemini quiz generation failed (${failure.code}${failure.upstreamStatus ? `, upstream ${failure.upstreamStatus}` : ''}).`);
+    logGeminiFailure(error, failure, 'quiz generation', [prompt]);
     throw failure;
   }
 }
