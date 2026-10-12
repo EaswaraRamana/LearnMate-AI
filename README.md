@@ -122,6 +122,13 @@ GEMINI_QUIZ_TIMEOUT_MS=90000
 
 Voice questions are recorded in the browser and transcribed by Gemini on the server. This avoids depending on the browser's external speech-recognition service. Microphone access and a valid `GEMINI_API_KEY` are required; audio recordings are sent to Google for transcription and are not stored by LearnMate. A transcript is inserted into the tutor input for review before the student submits it. `GEMINI_API_KEY` being present indicates configuration only; a successful live request also depends on the key having model access and available quota.
 
+### Separate Vercel and Render deployments
+When the frontend and backend are deployed separately, configure:
+- **Vercel frontend environment variable:** `VITE_API_URL=https://learnmate-ai-od0u.onrender.com`
+- **Render backend environment variable:** `FRONTEND_URL=https://<your-vercel-domain>` (the exact origin, with no path or trailing slash)
+
+Set `FRONTEND_URL` to the deployed Vercel origin so the backend permits credentialed browser requests only from that frontend. The API service appends `/api` itself. Leave `VITE_API_URL` unset for local development with the full-stack `npm run dev` server.
+
 ---
 
 ## 5. Database Schema & Supabase Compatibility

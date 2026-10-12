@@ -14,7 +14,15 @@ import {
   SavedStudyResource
 } from '../types/index.ts';
 
-const API_BASE = '/api';
+const configuredApiUrl = import.meta.env.VITE_API_URL
+  ?.trim()
+  .replace(/\/+$/, '')
+  .replace(/\/api$/i, '') || '';
+const API_BASE = `${configuredApiUrl}/api`;
+
+function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, { ...init, credentials: 'include' });
+}
 
 async function tutorApiError(response: Response, fallback: string): Promise<Error> {
   let data: { error?: string | { message?: string } } | undefined;
@@ -54,7 +62,7 @@ export const api = {
     user: UserProfile;
     requiresEmailVerification: boolean;
   }> => {
-    const res = await fetch(`${API_BASE}/auth/signup`, {
+    const res = await apiFetch(`${API_BASE}/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -68,7 +76,7 @@ export const api = {
     user: UserProfile;
     requiresEmailVerification: boolean;
   }> => {
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    const res = await apiFetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -79,7 +87,7 @@ export const api = {
   },
 
   logout: async (): Promise<{ success: boolean }> => {
-    const res = await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+    const res = await apiFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
     const result = await res.json();
     if (!res.ok) throw new Error(result.error || 'Failed to sign out');
     return result;
@@ -87,13 +95,13 @@ export const api = {
 
   // Profile
   getProfile: async (): Promise<{ user: UserProfile; hasGeminiKey: boolean }> => {
-    const res = await fetch(`${API_BASE}/profile`);
+    const res = await apiFetch(`${API_BASE}/profile`);
     if (!res.ok) throw new Error('Failed to load user profile');
     return res.json();
   },
 
   updateProfile: async (data: Partial<UserProfile>): Promise<{ user: UserProfile }> => {
-    const res = await fetch(`${API_BASE}/profile`, {
+    const res = await apiFetch(`${API_BASE}/profile`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -104,13 +112,13 @@ export const api = {
 
   // Documents
   getDocuments: async (): Promise<{ documents: DocumentItem[] }> => {
-    const res = await fetch(`${API_BASE}/documents`);
+    const res = await apiFetch(`${API_BASE}/documents`);
     if (!res.ok) throw new Error('Failed to load documents');
     return res.json();
   },
 
   getDocument: async (id: string): Promise<{ document: DocumentItem; chunks: DocumentChunk[] }> => {
-    const res = await fetch(`${API_BASE}/documents/${id}`);
+    const res = await apiFetch(`${API_BASE}/documents/${id}`);
     if (!res.ok) throw new Error('Failed to load document');
     return res.json();
   },
@@ -121,7 +129,7 @@ export const api = {
     if (existingDocId) {
       formData.append('existingDocId', existingDocId);
     }
-    const res = await fetch(`${API_BASE}/documents/upload`, {
+    const res = await apiFetch(`${API_BASE}/documents/upload`, {
       method: 'POST',
       body: formData
     });
@@ -138,7 +146,7 @@ export const api = {
   reprocessDocument: async (docId: string, file: File): Promise<{ success: boolean; document: DocumentItem; message?: string }> => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${API_BASE}/documents/${docId}/reprocess`, {
+    const res = await apiFetch(`${API_BASE}/documents/${docId}/reprocess`, {
       method: 'POST',
       body: formData
     });
@@ -153,7 +161,7 @@ export const api = {
   },
 
   deleteDocument: async (id: string): Promise<{ success: boolean }> => {
-    const res = await fetch(`${API_BASE}/documents/${id}`, {
+    const res = await apiFetch(`${API_BASE}/documents/${id}`, {
       method: 'DELETE'
     });
     if (!res.ok) throw new Error('Failed to delete document');
@@ -161,26 +169,26 @@ export const api = {
   },
 
   searchDocuments: async (query: string): Promise<{ results: { chunk: DocumentChunk; score: number }[]; citations: any[] }> => {
-    const res = await fetch(`${API_BASE}/documents/search?q=${encodeURIComponent(query)}`);
+    const res = await apiFetch(`${API_BASE}/documents/search?q=${encodeURIComponent(query)}`);
     if (!res.ok) throw new Error('Failed to search documents');
     return res.json();
   },
 
   // Tutor
   getConversations: async (): Promise<{ conversations: TutorConversation[] }> => {
-    const res = await fetch(`${API_BASE}/tutor/conversations`);
+    const res = await apiFetch(`${API_BASE}/tutor/conversations`);
     if (!res.ok) throw new Error('Failed to load conversations');
     return res.json();
   },
 
   getConversation: async (id: string): Promise<{ conversation: TutorConversation; messages: TutorMessage[] }> => {
-    const res = await fetch(`${API_BASE}/tutor/conversations/${id}`);
+    const res = await apiFetch(`${API_BASE}/tutor/conversations/${id}`);
     if (!res.ok) throw new Error('Failed to load conversation');
     return res.json();
   },
 
   createConversation: async (title: string, documentIds: string[] = []): Promise<{ conversation: TutorConversation }> => {
-    const res = await fetch(`${API_BASE}/tutor/conversations`, {
+    const res = await apiFetch(`${API_BASE}/tutor/conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, documentIds })
@@ -190,7 +198,7 @@ export const api = {
   },
 
   deleteConversation: async (id: string): Promise<{ success: boolean }> => {
-    const res = await fetch(`${API_BASE}/tutor/conversations/${id}`, {
+    const res = await apiFetch(`${API_BASE}/tutor/conversations/${id}`, {
       method: 'DELETE'
     });
     if (!res.ok) throw new Error('Failed to delete conversation');
@@ -206,7 +214,7 @@ export const api = {
     studyMaterial?: { title: string; content: string }
   ): Promise<{ conversationId: string; message: TutorMessage }> => {
     try {
-      const res = await fetch(`${API_BASE}/tutor/chat`, {
+      const res = await apiFetch(`${API_BASE}/tutor/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, conversationId, documentIds, level, actionType, studyMaterial })
@@ -222,7 +230,7 @@ export const api = {
     const formData = new FormData();
     formData.append('audio', audio, 'voice-question');
     try {
-      const res = await fetch(`${API_BASE}/tutor/transcribe`, {
+      const res = await apiFetch(`${API_BASE}/tutor/transcribe`, {
         method: 'POST',
         body: formData
       });
@@ -241,7 +249,7 @@ export const api = {
     documentId?: string;
     studyMaterial?: { title: string; content: string };
   }): Promise<{ quiz: Quiz; notice?: string }> => {
-    const res = await fetch(`${API_BASE}/quiz/generate`, {
+    const res = await apiFetch(`${API_BASE}/quiz/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params)
@@ -259,7 +267,7 @@ export const api = {
     masteryUpdates: Record<string, TopicMastery>;
     recommendedTasks: StudyTask[];
   }> => {
-    const res = await fetch(`${API_BASE}/quiz/submit`, {
+    const res = await apiFetch(`${API_BASE}/quiz/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ quizId, responses, timeSpentSeconds })
@@ -269,21 +277,21 @@ export const api = {
   },
 
   getQuizAttempts: async (): Promise<{ attempts: QuizAttempt[] }> => {
-    const res = await fetch(`${API_BASE}/quiz/attempts`);
+    const res = await apiFetch(`${API_BASE}/quiz/attempts`);
     if (!res.ok) throw new Error('Failed to load quiz history');
     return res.json();
   },
 
   // Analytics
   getAnalytics: async (): Promise<{ analytics: AnalyticsOverview }> => {
-    const res = await fetch(`${API_BASE}/analytics`);
+    const res = await apiFetch(`${API_BASE}/analytics`);
     if (!res.ok) throw new Error('Failed to load analytics');
     return res.json();
   },
 
   // Study materials and per-user reading state
   getStudyData: async (): Promise<{ progress: StudyProgress[]; resources: SavedStudyResource[] }> => {
-    const res = await fetch(`${API_BASE}/study/progress`);
+    const res = await apiFetch(`${API_BASE}/study/progress`);
     if (!res.ok) throw new Error('Failed to load study progress');
     return res.json();
   },
@@ -292,7 +300,7 @@ export const api = {
     materialId: string,
     updates: Partial<Pick<StudyProgress, 'progressPercent' | 'sectionIndex' | 'completed' | 'bookmarked' | 'notes'>> & { accessed?: boolean }
   ): Promise<{ progress: StudyProgress }> => {
-    const res = await fetch(`${API_BASE}/study/progress/${encodeURIComponent(materialId)}`, {
+    const res = await apiFetch(`${API_BASE}/study/progress/${encodeURIComponent(materialId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates)
@@ -303,7 +311,7 @@ export const api = {
   },
 
   addStudyResource: async (resource: Pick<SavedStudyResource, 'title' | 'url' | 'subject' | 'topic' | 'description'>): Promise<{ resource: SavedStudyResource }> => {
-    const res = await fetch(`${API_BASE}/study/resources`, {
+    const res = await apiFetch(`${API_BASE}/study/resources`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(resource)
@@ -315,13 +323,13 @@ export const api = {
 
   // Study Planner
   getTasks: async (): Promise<{ tasks: StudyTask[] }> => {
-    const res = await fetch(`${API_BASE}/tasks`);
+    const res = await apiFetch(`${API_BASE}/tasks`);
     if (!res.ok) throw new Error('Failed to load tasks');
     return res.json();
   },
 
   createTask: async (task: Partial<StudyTask>): Promise<{ task: StudyTask }> => {
-    const res = await fetch(`${API_BASE}/tasks`, {
+    const res = await apiFetch(`${API_BASE}/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(task)
@@ -332,7 +340,7 @@ export const api = {
   },
 
   updateTask: async (id: string, updates: Partial<StudyTask>): Promise<{ task: StudyTask }> => {
-    const res = await fetch(`${API_BASE}/tasks/${id}`, {
+    const res = await apiFetch(`${API_BASE}/tasks/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates)
@@ -342,7 +350,7 @@ export const api = {
   },
 
   deleteTask: async (id: string): Promise<{ success: boolean }> => {
-    const res = await fetch(`${API_BASE}/tasks/${id}`, {
+    const res = await apiFetch(`${API_BASE}/tasks/${id}`, {
       method: 'DELETE'
     });
     if (!res.ok) throw new Error('Failed to delete task');
@@ -351,7 +359,7 @@ export const api = {
 
   // Demo Reset
   resetDemoData: async (): Promise<{ success: boolean; message: string }> => {
-    const res = await fetch(`${API_BASE}/demo/reset`, { method: 'POST' });
+    const res = await apiFetch(`${API_BASE}/demo/reset`, { method: 'POST' });
     if (!res.ok) throw new Error('Failed to reset demo data');
     return res.json();
   }
